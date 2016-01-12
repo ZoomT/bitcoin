@@ -2967,7 +2967,7 @@ bool CheckBlock(const CBlock& block, CValidationState& state, bool fCheckPOW, bo
     // Check the merkle root.
     if (fCheckMerkleRoot) {
         bool mutated;
-        uint256 hashMerkleRoot2 = BlockMerkleRoot(block, &mutated);
+        uint256 hashMerkleRoot2 = BlockMerkleRoot(block, &mutated, fCheckLegacyBlock);
         if (block.hashMerkleRoot != hashMerkleRoot2)
             return state.DoS(100, error("CheckBlock(): hashMerkleRoot mismatch"),
                              REJECT_INVALID, "bad-txnmrklroot", true);
@@ -3098,23 +3098,13 @@ bool ContextualCheckBlock(const CBlock& block, CValidationState& state, CBlockIn
         }
     }
 
-    // Enforce BIP102s softfork rules:
-    // (1) the coinbase MUST contain the merkle root of the remaining non-coinbase transactions; and
-    // (2) the empty block containing nothing but the coinbase tx MUST be valid under the old rules.
+    // Enforce the BIP102s firmfork rule that the empty block containing nothing but the legacy coinbase tx MUST be valid under the old rules.
     if (block.nTime >= BIP102_FORK_TIME)
     {
-        bool mutated;
-        uint256 merkleRoot = BlockCoinbaseMerkleRoot(block, &mutated);
-        CScript expect = CScript() << nHeight << ToByteVector(merkleRoot);
-        if (block.vtx[0].vin[0].scriptSig.size() < expect.size() ||
-            !std::equal(expect.begin(), expect.end(), block.vtx[0].vin[0].scriptSig.begin())) {
-            return state.DoS(100, error("%s: merkle root mismatch in coinbase", __func__), REJECT_INVALID, "bad-cb-merkle-root");
-        }
-        if (mutated)
-            return state.DoS(100, error("%s: duplicate transaction", __func__), REJECT_INVALID, "bad-txns-duplicate", true);
-
         CBlock legacyBlock(block.GetBlockHeader());
-        legacyBlock.vtx.push_back(block.vtx[0]);
+        CMutableTransaction txLegacyCoinbase;
+        MakeLegacyCoinbaseTransaction(txLegacyCoinbase, block);
+        legacyBlock.vtx.push_back(txLegacyCoinbase);
         bool fCheckLegacyBlock = true;
         if (!CheckBlock(legacyBlock, state, fCheckPOW, fCheckMerkleRoot, fCheckLegacyBlock)) {
             return false;

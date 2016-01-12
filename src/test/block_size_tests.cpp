@@ -33,7 +33,9 @@ FillBlock(CBlock& block, const CChainParams& chainparams, unsigned int nSize)
     // Create a block that is exactly 1,000,000 bytes, serialized:
     CMutableTransaction tx;
     tx.vin.resize(1);
-    tx.vin[0].scriptSig = CScript() << OP_11;
+    CBlockIndex* pindexPrev = chainActive.Tip();
+    int nHeight = pindexPrev == NULL ? 0 : pindexPrev->nHeight + 1;
+    tx.vin[0].scriptSig = CScript() << nHeight << OP_11;
     tx.vin[0].prevout.hash = block.vtx[0].GetHash(); // passes CheckBlock, would fail if we checked inputs.
     tx.vin[0].prevout.n = 0;
     tx.vout.resize(1);
@@ -59,14 +61,6 @@ FillBlock(CBlock& block, const CChainParams& chainparams, unsigned int nSize)
     block.vtx.push_back(tx);
     nBlockSize = ::GetSerializeSize(block, SER_NETWORK, PROTOCOL_VERSION);
     assert(nBlockSize == nSize);
-
-    // Fix the coinbase.
-    CBlockIndex* pindexPrev = chainActive.Tip();
-    int nHeight = pindexPrev == NULL ? 0 : pindexPrev->nHeight + 1;
-    uint256 merkleRoot = BlockCoinbaseMerkleRoot(block, NULL);
-    size_t size = block.vtx[0].vin[0].scriptSig.size();
-    const_cast<CScript&>(block.vtx[0].vin[0].scriptSig) = CScript() << nHeight << ToByteVector(merkleRoot) << OP_0;     // Probably not the right way of doing this...
-    assert(block.vtx[0].vin[0].scriptSig.size() == size);
 }
 
 static bool TestCheckBlock(CBlock& block, const CChainParams& chainparams, uint64_t nTime, unsigned int nSize)

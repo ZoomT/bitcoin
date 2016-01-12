@@ -152,27 +152,19 @@ uint256 ComputeMerkleRootFromBranch(const uint256& leaf, const std::vector<uint2
     return hash;
 }
 
-uint256 BlockMerkleRoot(const CBlock& block, bool* mutated)
+uint256 BlockMerkleRoot(const CBlock& block, bool* mutated, bool legacy)
 {
     std::vector<uint256> leaves;
-    if (block.nTime < BIP102_FORK_TIME)
-    {
+    if (legacy || block.nTime < BIP102_FORK_TIME) {
         leaves.resize(block.vtx.size());
         for (size_t s = 0; s < block.vtx.size(); s++) {
             leaves[s] = block.vtx[s].GetHash();
         }
     }
-    else
-        leaves.push_back(block.vtx[0].GetHash());
-    return ComputeMerkleRoot(leaves, mutated);
-}
-
-uint256 BlockCoinbaseMerkleRoot(const CBlock& block, bool *mutated)
-{
-    std::vector<uint256> leaves;
-    leaves.resize(block.vtx.size());
-    for (size_t s = 1; s < block.vtx.size(); s++) {
-        leaves[s] = block.vtx[s].GetHash();
+    else {
+        CMutableTransaction legacyCoinbase;
+        MakeLegacyCoinbaseTransaction(legacyCoinbase, block, mutated);
+        leaves.push_back(legacyCoinbase.GetHash());
     }
     return ComputeMerkleRoot(leaves, mutated);
 }
@@ -186,3 +178,36 @@ std::vector<uint256> BlockMerkleBranch(const CBlock& block, uint32_t position)
     }
     return ComputeMerkleBranch(leaves, position);
 }
+
+void MakeLegacyCoinbaseTransaction(CMutableTransaction &coinbase, const CBlock& block, bool *mutated) {
+    // Calculate Merkle root
+    std::vector<uint256> leaves;
+    leaves.resize(block.vtx.size());
+    for (size_t s = 0; s < block.vtx.size(); s++) {
+        leaves[s] = block.vtx[s].GetHash();
+    }
+    const uint256 merkleRoot = ComputeMerkleRoot(leaves, mutated);
+
+    // Parse nHeight (BIP34 handling)
+    const CScript& script = block.vtx[0].vin[0].scriptSig;
+    CScript::const_iterator pc = script.begin();
+    unsigned int nHeight = 0;
+    opcodetype opcode;
+    std::vector<unsigned char> vch;
+    if (script.GetOp(pc, opcode, vch) && vch.size() > 0 && vch.size() <= 4) {
+        for (size_t i = 0; i != vch.size(); ++i)
+            nHeight |= static_cast<unsigned int>(vch[i]) << 8*i;
+    }
+
+    // Construct legacy coinbase tx
+    coinbase.nVersion = 1;
+    coinbase.nLockTime = 0;
+    coinbase.vin.resize(1);
+    coinbase.vin[0].prevout.SetNull();
+    coinbase.vin[0].scriptSig = CScript() << nHeight << OP_0;
+    coinbase.vin[0].nSequence = std::numeric_limits<uint32_t>::max();
+    coinbase.vout.resize(1);
+    coinbase.vout[0].scriptPubKey = CScript() << OP_RETURN << ToByteVector(merkleRoot);
+    coinbase.vout[0].nValue = 0;
+}
+
